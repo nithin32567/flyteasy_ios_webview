@@ -22,7 +22,8 @@ flutter pub get
 
 # Setup Flutter configuration.
 echo "Building iOS configuration..."
-flutter build ios --config-only --no-codesign
+# Change to --release to ensure App.framework is fully built for the App Store.
+flutter build ios --release --no-codesign
 
 # Install CocoaPods.
 echo "Installing CocoaPods..."
