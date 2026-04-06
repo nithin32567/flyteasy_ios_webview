@@ -8,6 +8,19 @@
 		<string>flyteasy</string>
 		<key>CFBundleExecutable</key>
 		<string>$(EXECUTABLE_NAME)</string>
+		<key>GIDClientID</key>
+		<string>349556100233-b90kg0pptdoarmrh5le62h3lr59c5g34.apps.googleusercontent.com</string>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>com.googleusercontent.apps.349556100233-b90kg0pptdoarmrh5le62h3lr59c5g34</string>
+				</array>
+			</dict>
+		</array>
 		<key>CFBundleIdentifier</key>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 		<key>CFBundleInfoDictionaryVersion</key>

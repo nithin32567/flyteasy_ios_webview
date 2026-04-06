@@ -7,9 +7,10 @@ set -e
 # Move to the project root.
 cd $CI_PRIMARY_REPOSITORY_PATH
 
-# Install Flutter using git.
-git clone https://github.com/flutter/flutter.git --depth 1 -b stable $HOME/flutter
-export PATH="$PATH:$HOME/flutter/bin"
+# Install Flutter using git into the workspace.
+# This ensures it's available on the same volume as the project.
+git clone https://github.com/flutter/flutter.git --depth 1 -b stable ./flutter
+export PATH="$PATH:`pwd`/flutter/bin"
 
 # Install Flutter artifacts for iOS.
 flutter precache --ios
@@ -17,14 +18,12 @@ flutter precache --ios
 # Install Flutter dependencies.
 flutter pub get
 
-# Setup Flutter iOS build configuration
+# Setup Flutter iOS build configuration (generates Generated.xcconfig)
 flutter build ios --config-only --no-codesign
-
-# Install CocoaPods using Homebrew.
-HOMEBREW_NO_AUTO_UPDATE=1 brew install cocoapods
 
 # Install CocoaPods dependencies.
 cd ios
 pod install
 
 exit 0
+
