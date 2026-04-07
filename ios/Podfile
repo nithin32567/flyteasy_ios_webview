@@ -43,6 +43,13 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      # Remove absolute local paths that cause Code 70 export errors in Xcode Cloud
+      if config.build_settings['LIBRARY_SEARCH_PATHS']
+        paths = config.build_settings['LIBRARY_SEARCH_PATHS']
+        if paths.is_a?(Array)
+          config.build_settings['LIBRARY_SEARCH_PATHS'] = paths.reject { |p| p.start_with?('/Users/') }
+        end
+      end
     end
   end
 end
