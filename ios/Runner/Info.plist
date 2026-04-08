@@ -67,5 +67,13 @@
 			<key>NSAllowsArbitraryLoadsInWebContent</key>
 			<true/>
 		</dict>
+		<key>NSCameraUsageDescription</key>
+		<string>This app requires camera access to allow you to take photos for your profile or flight documents.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>This app requires microphone access for voice-based searches and features.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>This app requires photo library access to let you upload documents or images for your flight bookings.</string>
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>This app requires location access to suggest nearby airports and personalize your search results.</string>
 	</dict>
 </plist>
