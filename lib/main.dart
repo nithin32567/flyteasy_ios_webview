@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -37,23 +37,14 @@ class WebViewScreen extends StatefulWidget {
 
 class _WebViewScreenState extends State<WebViewScreen> {
   static const String _appUrl = 'https://flyteasy.com';
-  static const String _googleIosClientId =
-      '349556100233-5qlvfbfrhgq0qac61u0qg6gslbcfo54o.apps.googleusercontent.com';
-  static const String _googleServerClientId =
-      '349556100233-b90kg0pptdoarmrh5le62h3lr59c5g34.apps.googleusercontent.com';
   late final WebViewController controller;
   late final WebViewCookieManager cookieManager;
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId: _googleIosClientId,
-    scopes: ['email', 'profile'],
-    serverClientId: _googleServerClientId,
-  );
-
   bool _isHandlingBack = false;
-  bool _isGoogleSigningIn = false;
   bool _isAppleSigningIn = false;
+  bool _showNativeAuthButtons = false;
   String _currentUrl = _appUrl;
+  Timer? _authStateTimer;
 
   @override
   void initState() {
@@ -63,13 +54,6 @@ class _WebViewScreenState extends State<WebViewScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..enableZoom(false)
       ..setBackgroundColor(const Color(0x00000000))
-      ..addJavaScriptChannel(
-        'FlyteasyNativeGoogleSignIn',
-        onMessageReceived: (JavaScriptMessage message) {
-          debugPrint('JS requested native Google Sign-In: ${message.message}');
-          _handleNativeGoogleSignIn();
-        },
-      )
       ..addJavaScriptChannel(
         'FlyteasyNativeAppleSignIn',
         onMessageReceived: (JavaScriptMessage message) {
@@ -99,18 +83,11 @@ class _WebViewScreenState extends State<WebViewScreen> {
               });
             }
 
-            _injectGoogleButtonBridge();
             _injectAppleButtonBridge();
+            _updateNativeAuthButtonVisibility();
           },
           onNavigationRequest: (NavigationRequest request) {
             debugPrint('Navigating to: ${request.url}');
-
-            if (request.url.contains('accounts.google.com/o/oauth2') ||
-                request.url.contains('accounts.google.com/v3/signin') ||
-                request.url.contains('gsiwebsdk=3')) {
-              _handleNativeGoogleSignIn();
-              return NavigationDecision.prevent;
-            }
 
             if (request.url.contains('appleid.apple.com/auth/authorize')) {
               _handleNativeAppleSignIn();
@@ -122,6 +99,65 @@ class _WebViewScreenState extends State<WebViewScreen> {
         ),
       )
       ..loadRequest(Uri.parse(_appUrl));
+
+    _authStateTimer = Timer.periodic(
+      const Duration(milliseconds: 900),
+      (_) {
+        if (mounted) {
+          _updateNativeAuthButtonVisibility();
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _authStateTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _updateNativeAuthButtonVisibility() async {
+    try {
+      final dynamic result = await controller.runJavaScriptReturningResult(r"""
+        (() => {
+          const url = window.location.href.toLowerCase();
+          const pathname = window.location.pathname.toLowerCase();
+          const bodyText = (document.body?.innerText || '').toLowerCase();
+          const hasEmail = !!document.querySelector('input[type="email"], input[name*="email" i], input[autocomplete="email"]');
+          const hasPassword = !!document.querySelector('input[type="password"]');
+          const textSignals = [
+            'sign in with google',
+            'continue with google',
+            'sign in with apple',
+            'continue with apple',
+            'welcome back',
+            'forgot password',
+            'create account',
+            'already have an account',
+            'sign up',
+            'log in',
+            'login'
+          ];
+          const hasTextSignal = textSignals.some((signal) => bodyText.includes(signal));
+          const authPath = [
+            '/login', '/signup', '/register', '/sign-up', '/sign_in', '/sign-in',
+            '/auth/login', '/auth/signup', '/auth/register'
+          ].some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'));
+          return hasEmail || hasPassword || hasTextSignal || authPath ||
+            url.includes('/login') || url.includes('/signup') || url.includes('/register') ||
+            url.includes('/auth/login') || url.includes('/auth/signup') || url.includes('/auth/register');
+        })();
+      """);
+
+      final bool shouldShow = result == true || result.toString().toLowerCase().contains('true');
+      if (mounted && shouldShow != _showNativeAuthButtons) {
+        setState(() {
+          _showNativeAuthButtons = shouldShow;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to update auth button visibility: $e');
+    }
   }
 
   bool get _isAuthPage {
@@ -145,16 +181,43 @@ class _WebViewScreenState extends State<WebViewScreen> {
       }
     }
 
+    final lowered = _currentUrl.toLowerCase();
+    if (lowered.contains('/login') ||
+        lowered.contains('/signup') ||
+        lowered.contains('/register') ||
+        lowered.contains('/auth/login') ||
+        lowered.contains('/auth/signup') ||
+        lowered.contains('/auth/register')) {
+      return true;
+    }
+
     return false;
   }
 
-  Future<void> _injectGoogleButtonBridge() async {
+  Future<void> _injectAppleButtonBridge() async {
     await controller.runJavaScript(r"""
       (() => {
-        const channel = window.FlyteasyNativeGoogleSignIn;
+        const channel = window.FlyteasyNativeAppleSignIn;
         if (!channel || typeof channel.postMessage !== 'function') return;
         const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const bodyText = (document.body?.innerText || '').toLowerCase();
+        const hasEmail = !!document.querySelector('input[type="email"], input[name*="email" i], input[autocomplete="email"]');
+        const hasPassword = !!document.querySelector('input[type="password"]');
+        const authSignals = [
+          'sign in / register',
+          'sign in/register',
+          'sign in with apple',
+          'continue with apple',
+          'welcome back',
+          'forgot password',
+          'create account',
+          'already have an account',
+          'sign up',
+          'log in',
+          'login'
+        ];
+        const hasAuthSignals = authSignals.some((signal) => bodyText.includes(signal));
         const authPrefixes = [
           '/login',
           '/signup',
@@ -169,56 +232,28 @@ class _WebViewScreenState extends State<WebViewScreen> {
         const isAuthPage = authPrefixes.some((prefix) =>
           window.location.pathname === prefix ||
           window.location.pathname.startsWith(prefix + '/')
-        );
+        ) || hasEmail || hasPassword || hasAuthSignals;
 
-        const hideGoogleButton = (button) => {
-          if (!isIos || !isAuthPage) return;
-          button.style.display = 'none';
-          button.style.visibility = 'hidden';
-          button.style.pointerEvents = 'none';
+        const getLabel = (element) => {
+          return (
+            element.innerText ||
+            element.textContent ||
+            element.getAttribute('aria-label') ||
+            element.getAttribute('title') ||
+            element.value ||
+            ''
+          ).trim().toLowerCase();
         };
 
-        const hookButtons = () => {
-          const buttons = Array.from(document.querySelectorAll('button'));
-          for (const button of buttons) {
-            const label = (button.innerText || button.textContent || '').trim().toLowerCase();
-            if (!label.includes('continue with google')) continue;
-
-             hideGoogleButton(button);
-            if (button.dataset.flyteasyNativeBridgeAttached === 'true') continue;
-
-            button.dataset.flyteasyNativeBridgeAttached = 'true';
-            button.addEventListener(
-              'click',
-              (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                event.stopImmediatePropagation();
-                channel.postMessage('google-button-click');
-              },
-              true
-            );
-          }
+        const hideElement = (element) => {
+          const target = element.closest('button,a,[role="button"],input[type="button"],input[type="submit"]') || element;
+          if (target.dataset.flyteasyHiddenAuthButton === 'true') return;
+          target.dataset.flyteasyHiddenAuthButton = 'true';
+          target.style.display = 'none';
+          target.style.visibility = 'hidden';
+          target.style.pointerEvents = 'none';
+          target.setAttribute('aria-hidden', 'true');
         };
-
-        hookButtons();
-
-        if (window.__flyteasyGoogleBridgeObserver) {
-          window.__flyteasyGoogleBridgeObserver.disconnect();
-        }
-
-        const observer = new MutationObserver(() => hookButtons());
-        observer.observe(document.body, { childList: true, subtree: true });
-        window.__flyteasyGoogleBridgeObserver = observer;
-      })();
-    """);
-  }
-
-  Future<void> _injectAppleButtonBridge() async {
-    await controller.runJavaScript(r"""
-      (() => {
-        const channel = window.FlyteasyNativeAppleSignIn;
-        if (!channel || typeof channel.postMessage !== 'function') return;
 
         const selectors = [
           '[data-provider="apple"]',
@@ -237,6 +272,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
         };
 
         const hookButtons = () => {
+          if (!isIos || !isAuthPage) return;
           const found = new Set();
 
           for (const selector of selectors) {
@@ -252,6 +288,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
           }
 
           for (const button of found) {
+            hideElement(button);
             if (button.dataset.flyteasyAppleBridgeAttached === 'true') continue;
 
             button.dataset.flyteasyAppleBridgeAttached = 'true';
@@ -260,7 +297,8 @@ class _WebViewScreenState extends State<WebViewScreen> {
               (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                event.stopImmediatePropagation();
+              event.stopImmediatePropagation();
+                event.stopPropagation();
                 channel.postMessage('apple-button-click');
               },
               true
@@ -279,115 +317,6 @@ class _WebViewScreenState extends State<WebViewScreen> {
         window.__flyteasyAppleBridgeObserver = observer;
       })();
     """);
-  }
-
-  Future<void> _handleNativeGoogleSignIn() async {
-    if (_isGoogleSigningIn) return;
-
-    if (mounted) {
-      setState(() {
-        _isGoogleSigningIn = true;
-      });
-    }
-
-    try {
-      debugPrint('=== Starting Native Google Sign-In ===');
-      try {
-        await _googleSignIn.signOut();
-        await _googleSignIn.disconnect();
-      } catch (_) {}
-      final GoogleSignInAccount? account = await _googleSignIn.signIn();
-      debugPrint('Sign-in result: account=${account?.email}');
-
-      if (account == null) {
-        debugPrint('Sign-in cancelled by user or returned null');
-        return;
-      }
-
-      final GoogleSignInAuthentication googleAuth =
-          await account.authentication;
-      final String? idToken = googleAuth.idToken;
-      final String? accessToken = googleAuth.accessToken;
-
-      debugPrint('idToken present: ${idToken != null}');
-      debugPrint('accessToken present: ${accessToken != null}');
-
-      if (idToken != null || accessToken != null) {
-        await controller.runJavaScript("""
-          (async () => {
-            const accessToken = ${_jsString(accessToken)};
-            const idToken = ${_jsString(idToken)};
-
-            if (accessToken) {
-              localStorage.setItem('mobile_auth_token', accessToken);
-            }
-            if (idToken) {
-              localStorage.setItem('mobile_id_token', idToken);
-            }
-
-            try {
-              console.log('=== FLUTTER: Exchanging Google token with backend ===');
-              const response = await fetch('https://flyteasy.com/api/login/google-login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                  accessToken,
-                  token: idToken
-                })
-              });
-              const data = await response.json();
-              console.log('=== FLUTTER: Backend response status=' + response.status + ' ===');
-              console.log('=== FLUTTER: Backend response data ===', JSON.stringify(data));
-              if (response.ok) {
-                console.log('=== FLUTTER: Login SUCCESS ===');
-                if (data.user) {
-                  localStorage.setItem('user', JSON.stringify(data.user));
-                }
-                if (data.token) {
-                  localStorage.setItem('token', data.token);
-                }
-                console.log('=== FLUTTER: Forcing full reload to home ===');
-                window.location.replace('/');
-              } else {
-                console.error('=== FLUTTER: Backend error ===', JSON.stringify(data));
-                console.log('=== FLUTTER: Falling back to mobile auth bridge reload ===');
-                window.location.replace('/');
-              }
-            } catch (e) {
-              console.error('=== FLUTTER: Token exchange failed ===', e.message || e);
-              console.log('=== FLUTTER: Falling back to mobile auth bridge reload after exception ===');
-              window.location.replace('/');
-            }
-          })();
-        """);
-        debugPrint('Native Login Success: Token sent to backend for exchange.');
-      } else {
-        debugPrint('ERROR: both idToken and accessToken are null');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Google sign-in did not return a token.'),
-            ),
-          );
-        }
-      }
-    } catch (error, stackTrace) {
-      debugPrint('Native Google Sign-In Error: ${error.toString()}');
-      debugPrint('Error type: ${error.runtimeType}');
-      debugPrint('Stack trace: $stackTrace');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Login failed: ${error.toString()}')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isGoogleSigningIn = false;
-        });
-      }
-    }
   }
 
   Future<void> _handleNativeAppleSignIn() async {
@@ -562,7 +491,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
           child: Stack(
             children: [
               WebViewWidget(controller: controller),
-              if (_isAuthPage)
+              if (_isAuthPage || _showNativeAuthButtons)
                 Positioned(
                   left: 16,
                   right: 16,
@@ -586,43 +515,9 @@ class _WebViewScreenState extends State<WebViewScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             ElevatedButton.icon(
-                              onPressed:
-                                  (_isGoogleSigningIn || _isAppleSigningIn)
-                                      ? null
-                                      : _handleNativeGoogleSignIn,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white,
-                                foregroundColor: const Color(0xFF1F1F1F),
-                                elevation: 0,
-                                minimumSize: const Size.fromHeight(52),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  side: const BorderSide(
-                                    color: Color(0xFFDADCE0),
-                                  ),
-                                ),
-                              ),
-                              icon: _isGoogleSigningIn
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.login),
-                              label: Text(
-                                _isGoogleSigningIn
-                                    ? 'Signing in with Google...'
-                                    : 'Continue with Google',
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            ElevatedButton.icon(
-                              onPressed:
-                                  (_isGoogleSigningIn || _isAppleSigningIn)
-                                      ? null
-                                      : _handleNativeAppleSignIn,
+                              onPressed: _isAppleSigningIn
+                                  ? null
+                                  : _handleNativeAppleSignIn,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF111111),
                                 foregroundColor: Colors.white,
